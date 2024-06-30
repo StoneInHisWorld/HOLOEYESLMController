@@ -15,7 +15,8 @@
 
 import os
 import time
-
+from multiprocessing import Event, Queue
+# import dill
 import numpy
 # 引入SLM Display SDK:
 # 请在使用的环境目录下添加holoeye文件夹
@@ -89,11 +90,11 @@ class HoloeyeSLM:
         # 如果在脚本运行完成后，IDE中止了python解释器进程，则SLM上的内容会随着脚本的运行结束而消失
 
     def AS_show(self, files, 
-                   start_signal, end_signal, pending_pics, 
-                   preview_window=False, file_transformer=None, path_generator=None,
-                   preview_kwargs=None, show_kwargs=None
-                   ):
-        """异步展示数据
+                start_signal, end_signal, pending_pics, 
+                preview_window=False, file_transformer=None, path_generator=None,
+                preview_kwargs=None, show_kwargs=None
+                ):
+        """多线程异步展示数据
         :param files:
         :param file_transformer:
         :param end_signal:
@@ -123,9 +124,57 @@ class HoloeyeSLM:
                 pending_pics.join()
                 # 展示文件
                 self.present(file, **show_kwargs)
+                # time.sleep(0.5)
                 # 将文件存储路径放入队列并通知相机拍照
                 pending_pics.put_nowait(path_generator(i))
         end_signal.set()
+
+    def AS_show_p(self, files, 
+                  start_signal: Event, pending_pics: Queue, saved: Event,
+                  preview_window=False, file_transformer=None, path_generator=None,
+                  preview_kwargs=None, show_kwargs=None
+                  ):
+        """多进程异步展示数据
+        :param files:
+        :param file_transformer:
+        :param end_signal:
+        :param preview_kwargs:
+        :param show_kwargs:
+        :return: None
+        """
+        # TODO: FATAL ERROR HOLOEYE SLM不支持多进程编程
+        # 设置初始参数
+        if preview_kwargs is None:
+            preview_kwargs = {}
+        if show_kwargs is None:
+            show_kwargs = {}
+        if file_transformer is None:
+            file_transformer = lambda f: f
+        # else:
+        #     file_transformer = dill.loads(file_transformer)
+        if path_generator is None:
+            path_generator = lambda i: os.path.join(f'{str(i)}.jpg')
+        # else:
+        #     path_generator = dill.loads(path_generator)
+        # 打开预览窗口
+        if preview_window:
+            self.open_preview(**preview_kwargs)
+        start_signal.set()
+        saved.set()
+        # 展示待展示图片
+        with tqdm(files, desc='\r展示图片……', unit='张',
+                  mininterval=1, position=0, leave=True) as pbar:
+            for i, file in enumerate(pbar):
+                file = file_transformer(file)
+                # 等待相机处理完上个文件
+                saved.wait()
+                # 展示文件
+                self.present(file, **show_kwargs)
+                saved.clear()
+                # time.sleep(1)
+                # 将文件存储路径放入队列并通知相机拍照
+                pending_pics.put(path_generator(i))
+        
 
     @property
     def size(self):
