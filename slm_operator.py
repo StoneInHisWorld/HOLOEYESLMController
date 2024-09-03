@@ -15,24 +15,24 @@
 
 import os
 import time
-from multiprocessing import Event, Queue
-# import dill
+from queue import Queue
+from threading import Event
+from typing import Iterable, Callable
+
 import numpy
-# 引入SLM Display SDK:
-# 请在使用的环境目录下添加holoeye文件夹
-# 使用的环境目录：~/envs/your_env/Lib/site-packages
-# holoeye文件夹位于~/HOLOEYE Photonics/SLM Display SDK (Python) v_your_version_/python
 from holoeye import slmdisplaysdk
 from tqdm import tqdm
-# holoeye_dependency请从安装的SDK中附带的SLM Display SDK (Python) v_your_version_ Examples中获取
-# 至少需要在holoeye_dependency中加入showSLMPreview.py
 from holoeye_dependency.showSLMPreview import showSLMPreview
 
 
 class HoloeyeSLM:
+    """Holoeye™ SLM控制器，集成了在Holoeye™ SLM上展示图片的各种功能"""
 
     def __init__(self, rise_time=0.01):
-        """Holoeye™ SLM控制器，集成了在Holoeye™ SLM上展示图片的各种功能。"""
+        """Holoeye™ SLM控制器，集成了在Holoeye™ SLM上展示图片的各种功能
+
+        :param rise_time: SLM的上升时间，根据实验实际进行设置，以解决设备同步问题。
+        """
         # 初始化SLM库
         self.__device = slmdisplaysdk.SLMInstance()
         self.rise_time = rise_time
@@ -49,8 +49,9 @@ class HoloeyeSLM:
         return self
 
     def open_preview(self, scale=0., showFlag=0, pos=None):
-        """
-        打开SLM预览界面
+        """通过官方示例showSLMPreview()打开SLM预览界面
+
+        若需要指定pos参数，请进入showSLMPreview.py进行有关pos参数的编程，并修改接口。
         :param scale: 设置为0.0时，为“Fit”模式；设置为1.0时，屏幕的一个像素对应SLM的一个像素。
             请注意下采样插值会让数据看起来完全不一样。
         :param showFlag: 展示标记。
@@ -66,7 +67,8 @@ class HoloeyeSLM:
         showSLMPreview(self.__device, scale, showFlag)
 
     def present(self, file, showFlag=slmdisplaysdk.ShowFlags.PresentAutomatic):
-        """向SLM展示数据。
+        """向SLM展示单份数据。
+
         如果是字符串，则认定为文件路径名；如果是numpy多维数组，则直接进行展示。
         :param file: 要展示的数据
         :param showFlag: 展示模式
@@ -89,17 +91,30 @@ class HoloeyeSLM:
 
         # 如果在脚本运行完成后，IDE中止了python解释器进程，则SLM上的内容会随着脚本的运行结束而消失
 
-    def AS_show(self, files, 
-                start_signal, end_signal, pending_pics, 
-                preview_window=False, file_transformer=None, path_generator=None,
+    def AS_show(self,
+                files: Iterable, start_signal: Event, end_signal: Event,
+                pending_pics: Queue = None, preview_window=False, present_interval: float = None,
+                file_transformer: Callable = None, path_generator: Callable = None,
                 preview_kwargs=None, show_kwargs=None
                 ):
         """多线程异步展示数据
-        :param files:
-        :param file_transformer:
-        :param end_signal:
-        :param preview_kwargs:
-        :param show_kwargs:
+
+        :param files: 要展示的图片文件列表
+        :param start_signal: 数据展示开始事件，一旦set则开始展示`files`
+        :param end_signal: 数据展示结束事件，数据展示完毕，SLM会将其set
+        :param pending_pics: 数据保存路径输送队列。
+            一份数据展示后，会调用路径生成器`path_generator`生成该份数据的保存路径，放入该队列中。
+            设置为None则会进行连续展示模式。
+        :param preview_window: 是否打开SLM预览窗
+        :param present_interval: 连续展示下，数据间的展示间隔，设置为None则会进行无间断展示。
+        :param file_transformer: 文件展示前，需要进行的预处理程序，签名需为：
+            def file_transformer(file)
+            其中，file为单张图片。
+        :param path_generator: 路径生成器，负责生成每张图片的保存路径，签名需为：
+            def path_generator(i)
+            其中，i为图片编号。
+        :param preview_kwargs: 图片预览关键字参数，为self.open_preview()的关键字参数。
+        :param show_kwargs: 图片展示关键字参数，为self.present()的关键字参数。
         :return: None
         """
         # 设置初始参数
@@ -121,59 +136,16 @@ class HoloeyeSLM:
             for i, file in enumerate(pbar):
                 file = file_transformer(file)
                 # 等待相机处理完上个文件
-                pending_pics.join()
+                if pending_pics:
+                    pending_pics.join()
                 # 展示文件
                 self.present(file, **show_kwargs)
-                # time.sleep(0.5)
+                if present_interval:
+                    time.sleep(present_interval)
                 # 将文件存储路径放入队列并通知相机拍照
-                pending_pics.put_nowait(path_generator(i))
+                if pending_pics:
+                    pending_pics.put_nowait(path_generator(i))
         end_signal.set()
-
-    def AS_show_p(self, files, 
-                  start_signal: Event, pending_pics: Queue, saved: Event,
-                  preview_window=False, file_transformer=None, path_generator=None,
-                  preview_kwargs=None, show_kwargs=None
-                  ):
-        """多进程异步展示数据
-        :param files:
-        :param file_transformer:
-        :param end_signal:
-        :param preview_kwargs:
-        :param show_kwargs:
-        :return: None
-        """
-        # TODO: FATAL ERROR HOLOEYE SLM不支持多进程编程
-        # 设置初始参数
-        if preview_kwargs is None:
-            preview_kwargs = {}
-        if show_kwargs is None:
-            show_kwargs = {}
-        if file_transformer is None:
-            file_transformer = lambda f: f
-        # else:
-        #     file_transformer = dill.loads(file_transformer)
-        if path_generator is None:
-            path_generator = lambda i: os.path.join(f'{str(i)}.jpg')
-        # else:
-        #     path_generator = dill.loads(path_generator)
-        # 打开预览窗口
-        if preview_window:
-            self.open_preview(**preview_kwargs)
-        start_signal.set()
-        saved.set()
-        # 展示待展示图片
-        with tqdm(files, desc='\r展示图片……', unit='张',
-                  mininterval=1, position=0, leave=True) as pbar:
-            for i, file in enumerate(pbar):
-                file = file_transformer(file)
-                # 等待相机处理完上个文件
-                saved.wait()
-                # 展示文件
-                self.present(file, **show_kwargs)
-                saved.clear()
-                # time.sleep(1)
-                # 将文件存储路径放入队列并通知相机拍照
-                pending_pics.put(path_generator(i))
         
 
     @property
