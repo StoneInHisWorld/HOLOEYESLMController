@@ -22,7 +22,7 @@ from typing import Iterable, Callable
 import numpy
 from holoeye import slmdisplaysdk
 from tqdm import tqdm
-from holoeye_dependency.showSLMPreview import showSLMPreview
+from ..holoeye_dependency.showSLMPreview import showSLMPreview
 
 
 class HoloeyeSLM:
@@ -66,13 +66,12 @@ class HoloeyeSLM:
         """
         showSLMPreview(self.__device, scale, showFlag)
 
-    def present(self, file, showFlag=slmdisplaysdk.ShowFlags.PresentAutomatic):
+    def syn_present(self, file, showFlag=slmdisplaysdk.ShowFlags.PresentAutomatic):
         """向SLM展示单份数据。
 
         如果是字符串，则认定为文件路径名；如果是numpy多维数组，则直接进行展示。
         :param file: 要展示的数据
         :param showFlag: 展示模式
-        :return: None
         """
         slm = self.__device
 
@@ -85,33 +84,37 @@ class HoloeyeSLM:
             error = slm.showData(file, showFlag)
         else:
             # 否则出错
-            raise NotImplementedError(f"不支持的文件类型{type(file)}！file参数可以传递的数据类型为字符串（指示数据路径）以及numpy多维数组。")
+            raise NotImplementedError(
+                f"不支持的文件类型{type(file)}！file参数可以传递的数据类型为字符串（指示数据路径）以及numpy多维数组。")
         time.sleep(self.rise_time)
         assert error == slmdisplaysdk.ErrorCode.NoError, slm.errorString(error)
 
         # 如果在脚本运行完成后，IDE中止了python解释器进程，则SLM上的内容会随着脚本的运行结束而消失
 
-    def AS_show(self,
-                files: Iterable, start_signal: Event, end_signal: Event,
-                pending_pics: Queue = None, preview_window=False, present_interval: float = None,
-                file_transformer: Callable = None, path_generator: Callable = None,
-                preview_kwargs=None, show_kwargs=None
-                ):
+    def async_present(self,
+                      files: Iterable, start_signal: Event, end_signal: Event,
+                      pending_pics: Queue = None, preview_window=False, present_interval: float = None,
+                      file_transformer: Callable = None, path_generator: Callable = None,
+                      preview_kwargs=None, show_kwargs=None
+                      ):
         """多线程异步展示数据
 
         :param files: 要展示的图片文件列表
-        :param start_signal: 数据展示开始事件，一旦set则开始展示`files`
-        :param end_signal: 数据展示结束事件，数据展示完毕，SLM会将其set
+        :param start_signal: 数据展示开始事件。
+            作为所有设备开始工作的同步信号，在检查该事件之前，将会完成SLM的初始化工作。
+        :param end_signal: 数据展示结束事件。
+            数据展示完毕，本设备会将其set，从而通知所有设备展示已经完成。
         :param pending_pics: 数据保存路径输送队列。
-            一份数据展示后，会调用路径生成器`path_generator`生成该份数据的保存路径，放入该队列中。
+            展示一份数据后，会调用路径生成器`path_generator`生成该份数据的保存路径（该保存路径可以包含有数据的编号），
+            放入该队列中。队列中的路径作为信号发布给所有持有该队列的设备。
             设置为None则会进行连续展示模式。
         :param preview_window: 是否打开SLM预览窗
         :param present_interval: 连续展示下，数据间的展示间隔，设置为None则会进行无间断展示。
         :param file_transformer: 文件展示前，需要进行的预处理程序，签名需为：
-            def file_transformer(file)
+            def file_transformer(file) -> file
             其中，file为单张图片。
         :param path_generator: 路径生成器，负责生成每张图片的保存路径，签名需为：
-            def path_generator(i)
+            def path_generator(i) -> PathlikeObj
             其中，i为图片编号。
         :param preview_kwargs: 图片预览关键字参数，为self.open_preview()的关键字参数。
         :param show_kwargs: 图片展示关键字参数，为self.present()的关键字参数。
@@ -135,25 +138,21 @@ class HoloeyeSLM:
             start_signal.wait()
             for i, file in enumerate(pbar):
                 file = file_transformer(file)
-                # 等待相机处理完上个文件
+                # 等待设备处理完上个文件
                 if pending_pics:
                     pending_pics.join()
                 # 展示文件
-                self.present(file, **show_kwargs)
+                self.syn_present(file, **show_kwargs)
                 if present_interval:
                     time.sleep(present_interval)
-                # 将文件存储路径放入队列并通知相机拍照
+                # 将文件存储路径放入队列并通知设备处理
                 if pending_pics:
                     pending_pics.put_nowait(path_generator(i))
         end_signal.set()
-        
 
     @property
     def size(self):
         return (self.__device.height_px, self.__device.width_px)
 
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.__device = None
-
-
