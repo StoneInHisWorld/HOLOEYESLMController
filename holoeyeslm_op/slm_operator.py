@@ -22,7 +22,7 @@ from typing import Iterable, Callable
 import numpy
 from holoeye import slmdisplaysdk
 from tqdm import tqdm
-from ..holoeye_dependency.showSLMPreview import showSLMPreview
+from holoeye_dependency.showSLMPreview import showSLMPreview
 
 
 class HoloeyeSLM:
