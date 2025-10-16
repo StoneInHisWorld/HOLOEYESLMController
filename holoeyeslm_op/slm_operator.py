@@ -22,7 +22,7 @@ from typing import Iterable, Callable
 import numpy
 from holoeye import slmdisplaysdk
 from tqdm import tqdm
-from holoeye_dependency.showSLMPreview import showSLMPreview
+from ..holoeye_dependency.showSLMPreview import showSLMPreview
 
 
 class HoloeyeSLM:
@@ -128,7 +128,7 @@ class HoloeyeSLM:
         if file_transformer is None:
             file_transformer = lambda f: f
         if path_generator is None:
-            path_generator = lambda i: os.path.join(f'{str(i)}.jpg')
+            path_generator = lambda i: f'{str(i)}.jpg'
         # 打开预览窗口
         if preview_window:
             self.open_preview(**preview_kwargs)
