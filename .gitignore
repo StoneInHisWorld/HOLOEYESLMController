@@ -1,2 +1,4 @@
 /holoeye_dependency/*
 /.idea
+/.vscode
+/__pycache__
